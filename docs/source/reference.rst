@@ -1,5 +1,5 @@
-Reference
-===============
+Reference Manual
+================
 
 This reference manual details modules, functions, and variables included in
 Manim, describing what they are and what they do.  For learning how to use
@@ -37,6 +37,8 @@ Mobjects
    ~mobject.vector_field
    ~mobject.svg.brace
    ~mobject.svg.code_mobject
+   ~mobject.svg.style_utils
+   ~mobject.svg.svg_path
    ~mobject.svg.svg_mobject
    ~mobject.svg.tex_mobject
    ~mobject.svg.text_mobject
@@ -80,6 +82,7 @@ Animations
    ~animation.numbers
    ~animation.rotation
    ~animation.transform
+   ~animation.transform_matching_parts
    ~animation.update
 
 
@@ -106,7 +109,6 @@ Configuration
 
    ~_config
    ~_config.utils
-   ~_config.main_utils
    ~_config.logger_utils
 
 
@@ -121,6 +123,7 @@ Utilities
    ~utils.color
    ~utils.config_ops
    ~utils.hashing
+   ~utils.ipython_magic
    ~utils.images
    ~utils.iterables
    ~utils.paths

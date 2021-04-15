@@ -42,19 +42,20 @@ Examples
 
 """
 
-__all__ = ["Text", "Paragraph", "CairoText", "MarkupText"]
+__all__ = ["Text", "Paragraph", "MarkupText", "register_font"]
 
 
 import copy
 import hashlib
 import os
 import re
+import typing
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Dict
-from xml.sax.saxutils import escape
 
-import cairo
 import manimpango
-from manimpango import PangoUtils, TextSetting, MarkupUtils
+from manimpango import MarkupUtils, PangoUtils, TextSetting
 
 from ... import config, logger
 from ...constants import *
@@ -100,307 +101,6 @@ def remove_invisible_chars(mobject):
     return mobject_without_dots
 
 
-class CairoText(SVGMobject):
-    """Display (non-LaTeX) text.
-
-    Text objects behave like a :class:`.VGroup`-like iterable of all characters
-    in the given text. In particular, slicing is possible.
-
-
-    Tests
-    -----
-
-    Check whether writing text works::
-
-        >>> Text('The horse does not eat cucumber salad.')
-        Text('The horse does not eat cucumber salad.')
-
-    """
-
-    def __init__(
-        self,
-        text,
-        # Mobject
-        color=WHITE,
-        height=None,
-        width=None,
-        fill_opacity=1,
-        stroke_width=0,
-        should_center=True,
-        unpack_groups=True,
-        # Text
-        font="",
-        gradient=None,
-        line_spacing=-1,
-        size=1,
-        slant: str = NORMAL,
-        weight: str = NORMAL,
-        t2c=None,
-        t2f=None,
-        t2g=None,
-        t2s=None,
-        t2w=None,
-        tab_width=4,
-        **kwargs,
-    ):
-        # self.full2short(config)
-        if t2c is None:
-            t2c = {}
-        if t2f is None:
-            t2f = {}
-        if t2g is None:
-            t2g = {}
-        if t2s is None:
-            t2s = {}
-        if t2w is None:
-            t2w = {}
-        # If long form arguments are present, they take precedence
-        t2c = kwargs.pop("text2color", t2c)
-        t2f = kwargs.pop("text2font", t2f)
-        t2g = kwargs.pop("text2gradient", t2g)
-        t2s = kwargs.pop("text2slant", t2s)
-        t2w = kwargs.pop("text2weight", t2w)
-        self.t2c = t2c
-        self.t2f = t2f
-        self.t2g = t2g
-        self.t2s = t2s
-        self.t2w = t2w
-        self.font = font
-        self.gradient = gradient
-        self.line_spacing = line_spacing
-        self.size = size
-        self.slant = slant
-        self.weight = weight
-        self.tab_width = tab_width
-        self.original_text = text
-        text_without_tabs = text
-        if text.find("\t") != -1:
-            text_without_tabs = text.replace("\t", " " * self.tab_width)
-        self.text = text_without_tabs
-        if self.line_spacing == -1:
-            self.line_spacing = self.size + self.size * 0.3
-        else:
-            self.line_spacing = self.size + self.size * self.line_spacing
-        file_name = self.text2svg()
-        PangoUtils.remove_last_M(file_name)
-        SVGMobject.__init__(
-            self,
-            file_name,
-            height=height,
-            width=width,
-            unpack_groups=unpack_groups,
-            color=color,
-            fill_opacity=fill_opacity,
-            stroke_width=stroke_width,
-            should_center=should_center,
-            **kwargs,
-        )
-        self.text = text
-        self.submobjects = [*self.gen_chars()]
-        self.chars = VGroup(*self.submobjects)
-        self.text = text_without_tabs.replace(" ", "").replace("\n", "")
-        nppc = self.n_points_per_cubic_curve
-        for each in self:
-            if len(each.points) == 0:
-                continue
-            points = each.points
-            last = points[0]
-            each.clear_points()
-            for index, point in enumerate(points):
-                each.append_points([point])
-                if (
-                    index != len(points) - 1
-                    and (index + 1) % nppc == 0
-                    and any(point != points[index + 1])
-                ):
-                    each.add_line_to(last)
-                    last = points[index + 1]
-            each.add_line_to(last)
-        if self.t2c:
-            self.set_color_by_t2c()
-        if self.gradient:
-            self.set_color_by_gradient(*self.gradient)
-        if self.t2g:
-            self.set_color_by_t2g()
-        # anti-aliasing
-        if self.height is None and self.width is None:
-            self.scale(TEXT_MOB_SCALE_FACTOR)
-
-    def __repr__(self):
-        return f"Text({repr(self.original_text)})"
-
-    def gen_chars(self):
-        chars = VGroup()
-        submobjects_char_index = 0
-        for char_index in range(self.text.__len__()):
-            if (
-                self.text[char_index] == " "
-                or self.text[char_index] == "\t"
-                or self.text[char_index] == "\n"
-            ):
-                space = Dot(radius=0, fill_opacity=0, stroke_opacity=0)
-                if char_index == 0:
-                    space.move_to(self.submobjects[submobjects_char_index].get_center())
-                else:
-                    space.move_to(
-                        self.submobjects[submobjects_char_index - 1].get_center()
-                    )
-                chars.add(space)
-            else:
-                chars.add(self.submobjects[submobjects_char_index])
-                submobjects_char_index += 1
-        return chars
-
-    def find_indexes(self, word, text):
-        m = re.match(r"\[([0-9\-]{0,}):([0-9\-]{0,})\]", word)
-        if m:
-            start = int(m.group(1)) if m.group(1) != "" else 0
-            end = int(m.group(2)) if m.group(2) != "" else len(text)
-            start = len(text) + start if start < 0 else start
-            end = len(text) + end if end < 0 else end
-            return [(start, end)]
-        indexes = []
-        index = text.find(word)
-        while index != -1:
-            indexes.append((index, index + len(word)))
-            index = text.find(word, index + len(word))
-        return indexes
-
-    # def full2short(self, config_args):
-    #     for kwargs in [config_args]:
-    #         if kwargs.__contains__("text2color"):
-    #             kwargs["t2c"] = kwargs.pop("text2color")
-    #         if kwargs.__contains__("text2font"):
-    #             kwargs["t2f"] = kwargs.pop("text2font")
-    #         if kwargs.__contains__("text2gradient"):
-    #             kwargs["t2g"] = kwargs.pop("text2gradient")
-    #         if kwargs.__contains__("text2slant"):
-    #             kwargs["t2s"] = kwargs.pop("text2slant")
-    #         if kwargs.__contains__("text2weight"):
-    #             kwargs["t2w"] = kwargs.pop("text2weight")
-
-    def set_color_by_t2c(self, t2c=None):
-        t2c = t2c if t2c else self.t2c
-        for word, color in list(t2c.items()):
-            for start, end in self.find_indexes(word, self.original_text):
-                self.chars[start:end].set_color(color)
-
-    def set_color_by_t2g(self, t2g=None):
-        t2g = t2g if t2g else self.t2g
-        for word, gradient in list(t2g.items()):
-            for start, end in self.find_indexes(word, self.original_text):
-                self.chars[start:end].set_color_by_gradient(*gradient)
-
-    def str2slant(self, string):
-        if string == NORMAL:
-            return cairo.FontSlant.NORMAL
-        if string == ITALIC:
-            return cairo.FontSlant.ITALIC
-        if string == OBLIQUE:
-            return cairo.FontSlant.OBLIQUE
-
-    def str2weight(self, string):
-        if string == NORMAL:
-            return cairo.FontWeight.NORMAL
-        if string == BOLD:
-            return cairo.FontWeight.BOLD
-
-    def text2hash(self):
-        settings = self.font + self.slant + self.weight
-        settings += str(self.t2f) + str(self.t2s) + str(self.t2w)
-        settings += str(self.line_spacing) + str(self.size)
-        id_str = self.text + settings
-        hasher = hashlib.sha256()
-        hasher.update(id_str.encode())
-        return hasher.hexdigest()[:16]
-
-    def text2settings(self):
-        settings = []
-        t2x = [self.t2f, self.t2s, self.t2w]
-        for i in range(len(t2x)):
-            fsw = [self.font, self.slant, self.weight]
-            if t2x[i]:
-                for word, x in list(t2x[i].items()):
-                    for start, end in self.find_indexes(word, self.text):
-                        fsw[i] = x
-                        settings.append(TextSetting(start, end, *fsw))
-        # Set All text settings(default font slant weight)
-        fsw = [self.font, self.slant, self.weight]
-        settings.sort(key=lambda setting: setting.start)
-        temp_settings = settings.copy()
-        start = 0
-        for setting in settings:
-            if setting.start != start:
-                temp_settings.append(TextSetting(start, setting.start, *fsw))
-            start = setting.end
-        if start != len(self.text):
-            temp_settings.append(TextSetting(start, len(self.text), *fsw))
-        settings = sorted(temp_settings, key=lambda setting: setting.start)
-
-        if re.search(r"\n", self.text):
-            line_num = 0
-            for start, end in self.find_indexes("\n", self.text):
-                for setting in settings:
-                    if setting.line_num == -1:
-                        setting.line_num = line_num
-                    if start < setting.end:
-                        line_num += 1
-                        new_setting = copy.copy(setting)
-                        setting.end = end
-                        new_setting.start = end
-                        new_setting.line_num = line_num
-                        settings.append(new_setting)
-                        settings.sort(key=lambda setting: setting.start)
-                        break
-        for setting in settings:
-            if setting.line_num == -1:
-                setting.line_num = 0
-        return settings
-
-    def text2svg(self):
-        # anti-aliasing
-        size = self.size * 10
-        line_spacing = self.line_spacing * 10
-
-        if self.font == "":
-            if NOT_SETTING_FONT_MSG:
-                logger.warning(NOT_SETTING_FONT_MSG)
-
-        dir_name = config.get_dir("text_dir")
-        if not os.path.exists(dir_name):
-            os.makedirs(dir_name)
-
-        hash_name = self.text2hash()
-        file_name = os.path.join(dir_name, hash_name) + ".svg"
-        if os.path.exists(file_name):
-            return file_name
-        surface = cairo.SVGSurface(file_name, 600, 400)
-        context = cairo.Context(surface)
-        context.set_font_size(size)
-        context.move_to(START_X, START_Y)
-
-        settings = self.text2settings()
-        offset_x = 0
-        last_line_num = 0
-        for setting in settings:
-            font = setting.font.decode("utf-8")
-            slant = self.str2slant(setting.slant)
-            weight = self.str2weight(setting.weight)
-            text = self.text[setting.start : setting.end].replace("\n", " ")
-
-            context.select_font_face(font, slant, weight)
-            if setting.line_num != last_line_num:
-                offset_x = 0
-                last_line_num = setting.line_num
-            context.move_to(
-                START_X + offset_x, START_Y + line_spacing * setting.line_num
-            )
-            context.show_text(text)
-            offset_x += context.text_extents(text)[4]
-        surface.finish()
-        return file_name
-
-
 class Paragraph(VGroup):
     r"""Display a paragraph of text.
 
@@ -438,7 +138,7 @@ class Paragraph(VGroup):
         VGroup.__init__(self, **config)
 
         lines_str = "\n".join(list(text))
-        self.lines_text = Text(lines_str, **config)
+        self.lines_text = Text(lines_str, line_spacing=line_spacing, **config)
         lines_str_list = lines_str.split("\n")
         self.chars = self.gen_chars(lines_str_list)
 
@@ -563,7 +263,7 @@ class Paragraph(VGroup):
             self[line_no].move_to(
                 np.array(
                     [
-                        self.get_right()[0] - self[line_no].get_width() / 2,
+                        self.get_right()[0] - self[line_no].width / 2,
                         self[line_no].get_center()[1],
                         0,
                     ]
@@ -573,7 +273,7 @@ class Paragraph(VGroup):
             self[line_no].move_to(
                 np.array(
                     [
-                        self.get_left()[0] + self[line_no].get_width() / 2,
+                        self.get_left()[0] + self[line_no].width / 2,
                         self[line_no].get_center()[1],
                         0,
                     ]
@@ -689,7 +389,7 @@ class Text(SVGMobject):
     def __init__(
         self,
         text: str,
-        fill_opacity: int = 1,
+        fill_opacity: float = 1.0,
         stroke_width: int = 0,
         color: str = WHITE,
         size: int = 1,
@@ -712,11 +412,6 @@ class Text(SVGMobject):
         disable_ligatures: bool = False,
         **kwargs,
     ):
-
-        logger.info(
-            "Text now uses Pango for rendering. "
-            "In case of problems, the old implementation is available as CairoText."
-        )
         self.size = size
         self.line_spacing = line_spacing
         self.font = font
@@ -799,7 +494,7 @@ class Text(SVGMobject):
         if self.t2g:
             self.set_color_by_t2g()
         # anti-aliasing
-        if self.height is None and self.width is None:
+        if height is None and width is None:
             self.scale(TEXT_MOB_SCALE_FACTOR)
 
     def __repr__(self):
@@ -964,6 +659,9 @@ class Text(SVGMobject):
             self.text,
         )
 
+    def init_colors(self, propagate_colors=True):
+        SVGMobject.init_colors(self, propagate_colors=propagate_colors)
+
 
 class MarkupText(SVGMobject):
     r"""Display (non-LaTeX) text rendered using `Pango <https://pango.gnome.org/>`_.
@@ -977,27 +675,38 @@ class MarkupText(SVGMobject):
     - ``<tt>typewriter font</tt>``
     - ``<big>bigger font</big>`` and ``<small>smaller font</small>``
     - ``<sup>superscript</sup>`` and ``<sub>subscript</sub>``
-    - ``<span underline="double">double underline</span>``
+    - ``<span underline="double" underline_color="green">double underline</span>``
     - ``<span underline="error">error underline</span>``
+    - ``<span overline="single" overline_color="green">overline</span>``
+    - ``<span strikethrough="true" strikethrough_color="red">strikethrough</span>``
     - ``<span font_family="sans">temporary change of font</span>``
-    - ``<color col="RED">temporary change of color</color>``; colors can be specified as Manim constants like ``RED`` or ``YELLOW`` or as hex triples like ``#aabbaa``
-    - ``<gradient from="YELLOW" to="RED">temporary gradient</gradient>``; colors specified as above
+    - ``<span foreground="red">temporary change of color</span>``
+    - ``<span fgcolor="red">temporary change of color</span>``
+    - ``<gradient from="YELLOW" to="RED">temporary gradient</gradient>``
+
+    For ``<span>`` markup, colors can be specified either as hex triples like ``#aabbcc`` or as named CSS colors like ``AliceBlue``.
+    The ``<gradient>`` tag being handled by Manim rather than Pango, supports hex triplets or Manim constants like ``RED`` or ``RED_A``.
+    If you want to use Manim constants like ``RED_A`` together with ``<span>``,
+    you will need to use Python's f-String syntax as follows:
+    ``f'<span foreground="{RED_A}">here you go</span>'``
 
     If your text contains ligatures, the :class:`MarkupText` class may incorrectly determine
-    the first and last letter to be colored. This is due to the fact that e.g. ``fl``
+    the first and last letter when creating the gradient. This is due to the fact that e.g. ``fl``
     are two characters, but might be set as one single glyph, a ligature. If your language does
-    not depend on ligatures, consider setting ``disable_ligatures=True``. If you cannot
-    or do not want to do without ligatures, the ``gradient`` and ``color`` tag support
-    an optional attribute ``offset`` which can be used to compensate for that error.
-    Usage is as follows:
+    not depend on ligatures, consider setting ``disable_ligatures=True``. If you cannot or do
+    not want to do without ligatures, the ``gradient`` tag supports an optional attribute ``offset``
+    which can be used to compensate for that error. Usage is as follows:
 
-    - ``<color col="RED" offset="1">red text</color>`` to *start* coloring one letter earlier
-    - ``<color col="RED" offset=",1">red text</color>`` to *end* coloring one letter earlier
-    - ``<color col="RED" offset="2,1">red text</color>`` to *start* coloring two letters earlier and *end* one letter earlier
+    - ``<gradient from="RED" to="YELLOW" offset="1">example</gradient>`` to *start* the gradient one letter earlier
+    - ``<gradient from="RED" to="YELLOW" offset=",1">example</gradient>`` to *end* the gradient one letter earlier
+    - ``<gradient from="RED" to="YELLOW" offset="2,1">example</gradient>`` to *start* the gradient two letters earlier and *end* it one letter earlier
 
     Specifying a second offset may be necessary if the text to be colored does
     itself contain ligatures. The same can happen when using HTML entities for
     special chars.
+
+    When using ``underline``, ``overline`` or ``strikethrough`` together with ``<gradient>`` tags, you will also need to use the offset, because
+    underlines are additional paths in the final :class:`SVGMobject`, check out the corresponding example.
 
     Escaping of special characters: ``>`` *should* be written as ``&gt;`` whereas ``<`` and
     ``&`` *must* be written as ``&lt;`` and ``&amp;``.
@@ -1006,7 +715,7 @@ class MarkupText(SVGMobject):
     corresponding documentation page:
     `Pango Markup <https://developer.gnome.org/pango/stable/pango-Markup.html>`_.
     Please be aware that not all features are supported by this class and that
-    the ``<color>`` and ``<gradient>`` tags mentioned above are not supported by Pango.
+    the ``<gradient>`` tag mentioned above is not supported by Pango.
 
     Parameters
     ----------
@@ -1061,7 +770,7 @@ class MarkupText(SVGMobject):
         class ColorExample(Scene):
             def construct(self):
                 text1 = MarkupText(
-                    'all in red <color col="YELLOW">except this</color>', color=RED
+                    f'all in red <span fgcolor="{YELLOW}">except this</span>', color=RED
                 )
                 text2 = MarkupText("nice gradient", gradient=(BLUE, GREEN))
                 text3 = MarkupText(
@@ -1069,18 +778,41 @@ class MarkupText(SVGMobject):
                     gradient=(BLUE, GREEN),
                 )
                 text4 = MarkupText(
-                    'fl ligature <color col="#00ff00">causing trouble</color> here'
+                    'fl ligature <gradient from="RED" to="YELLOW">causing trouble</gradient> here'
                 )
                 text5 = MarkupText(
-                    'fl ligature <color col="#00ff00" offset="1">defeated</color> with offset'
+                    'fl ligature <gradient from="RED" to="YELLOW" offset="1">defeated</gradient> with offset'
                 )
                 text6 = MarkupText(
-                    'fl ligature <color col="GREEN" offset="1">floating</color> inside'
+                    'fl ligature <gradient from="RED" to="YELLOW" offset="1">floating</gradient> inside'
                 )
                 text7 = MarkupText(
-                    'fl ligature <color col="GREEN" offset="1,1">floating</color> inside'
+                    'fl ligature <gradient from="RED" to="YELLOW" offset="1,1">floating</gradient> inside'
                 )
                 group = VGroup(text1, text2, text3, text4, text5, text6, text7).arrange(DOWN)
+                self.add(group)
+
+    .. manim:: UnderlineExample
+        :save_last_frame:
+
+        class UnderlineExample(Scene):
+            def construct(self):
+                text1 = MarkupText(
+                    '<span underline="double" underline_color="green">bla</span>'
+                )
+                text2 = MarkupText(
+                    '<span underline="single" underline_color="green">xxx</span><gradient from="#ffff00" to="RED">aabb</gradient>y'
+                )
+                text3 = MarkupText(
+                    '<span underline="single" underline_color="green">xxx</span><gradient from="#ffff00" to="RED" offset="-1">aabb</gradient>y'
+                )
+                text4 = MarkupText(
+                    '<span underline="double" underline_color="green">xxx</span><gradient from="#ffff00" to="RED">aabb</gradient>y'
+                )
+                text5 = MarkupText(
+                    '<span underline="double" underline_color="green">xxx</span><gradient from="#ffff00" to="RED" offset="-2">aabb</gradient>y'
+                )
+                group = VGroup(text1, text2, text3, text4, text5).arrange(DOWN)
                 self.add(group)
 
     .. manim:: FontExample
@@ -1104,7 +836,7 @@ class MarkupText(SVGMobject):
 
         class NewlineExample(Scene):
             def construct(self):
-                text = MarkupText('foooo<color col="RED">oo\nbaa</color>aar')
+                text = MarkupText('foooo<span foreground="red">oo\nbaa</span>aar')
                 self.add(text)
 
     .. manim:: NoLigaturesExample
@@ -1112,8 +844,8 @@ class MarkupText(SVGMobject):
 
         class NoLigaturesExample(Scene):
             def construct(self):
-                text1 = MarkupText('fl<color col="RED">oat</color>ing')
-                text2 = MarkupText('fl<color col="RED">oat</color>ing', disable_ligatures=True)
+                text1 = MarkupText('fl<gradient from="RED" to="GREEN">oat</gradient>ing')
+                text2 = MarkupText('fl<gradient from="RED" to="GREEN">oat</gradient>ing', disable_ligatures=True)
                 group = VGroup(text1, text2).arrange(DOWN)
                 self.add(group)
 
@@ -1128,7 +860,7 @@ class MarkupText(SVGMobject):
             def construct(self):
                 morning = MarkupText("வணக்கம்", font="sans-serif")
                 chin = MarkupText(
-                    '見 角 言 谷  辛 <color col="BLUE">辰 辵 邑</color> 酉 釆 里!'
+                    '見 角 言 谷  辛 <span fgcolor="blue">辰 辵 邑</span> 酉 釆 里!'
                 )  # works as in ``Text``.
                 mess = MarkupText("Multi-Language", style=BOLD)
                 russ = MarkupText("Здравствуйте मस नम म ", font="sans-serif")
@@ -1169,6 +901,7 @@ class MarkupText(SVGMobject):
         **kwargs,
     ):
         self.text = text
+        self.color = color
         self.size = size
         self.line_spacing = line_spacing
         self.font = font
@@ -1184,7 +917,18 @@ class MarkupText(SVGMobject):
             text_without_tabs = text.replace("\t", " " * self.tab_width)
 
         colormap = self.extract_color_tags()
+        if len(colormap) > 0:
+            logger.warning(
+                'Using <color> tags in MarkupText is deprecated. Please use <span foreground="..."> instead.'
+            )
         gradientmap = self.extract_gradient_tags()
+
+        if not MarkupUtils.validate(self.text):
+            raise ValueError(
+                f"Pango cannot parse your markup in {self.text}. "
+                "Please check for typos, unmatched tags or unescaped "
+                "special chars like < and &."
+            )
 
         if self.line_spacing == -1:
             self.line_spacing = self.size + self.size * 0.3
@@ -1196,7 +940,6 @@ class MarkupText(SVGMobject):
         SVGMobject.__init__(
             self,
             file_name,
-            color=color,
             fill_opacity=fill_opacity,
             stroke_width=stroke_width,
             height=height,
@@ -1245,13 +988,13 @@ class MarkupText(SVGMobject):
                 *(self._parse_color(grad["from"]), self._parse_color(grad["to"]))
             )
         # anti-aliasing
-        if self.height is None and self.width is None:
+        if height is None and width is None:
             self.scale(TEXT_MOB_SCALE_FACTOR)
 
     def text2hash(self):
         """Generates ``sha256`` hash for file name."""
         settings = (
-            "MARKUPPANGO" + self.font + self.slant + self.weight
+            "MARKUPPANGO" + self.font + self.slant + self.weight + self.color
         )  # to differentiate from classical Pango Text
         settings += str(self.line_spacing) + str(self.size)
         settings += str(self.disable_ligatures)
@@ -1275,7 +1018,7 @@ class MarkupText(SVGMobject):
 
         logger.debug(f"Setting Text {self.text}")
         return MarkupUtils.text2svg(
-            self.text,
+            f'<span foreground="{self.color}">{self.text}</span>',
             self.font,
             self.slant,
             self.weight,
@@ -1314,7 +1057,7 @@ class MarkupText(SVGMobject):
         Removes the ``<gradient>`` tag, as it is not part of Pango's markup and would cause an error.
         """
         tags = re.finditer(
-            '<gradient\s+from="([^"]+)"\s+to="([^"]+)"(\s+offset="([^"]+)")?>(.+?)</gradient>',
+            r'<gradient\s+from="([^"]+)"\s+to="([^"]+)"(\s+offset="([^"]+)")?>(.+?)</gradient>',
             self.original_text,
             re.S,
         )
@@ -1351,9 +1094,12 @@ class MarkupText(SVGMobject):
         with a custom color.
 
         Removes the ``<color>`` tag, as it is not part of Pango's markup and would cause an error.
+
+        Note: Using the ``<color>`` tags is deprecated. As soon as the legacy syntax is gone, this function
+        will be removed.
         """
         tags = re.finditer(
-            '<color\s+col="([^"]+)"(\s+offset="([^"]+)")?>(.+?)</color>',
+            r'<color\s+col="([^"]+)"(\s+offset="([^"]+)")?>(.+?)</color>',
             self.original_text,
             re.S,
         )
@@ -1380,3 +1126,67 @@ class MarkupText(SVGMobject):
 
     def __repr__(self):
         return f"MarkupText({repr(self.original_text)})"
+
+
+@contextmanager
+def register_font(font_file: typing.Union[str, Path]):
+    """Temporarily add a font file to Pango's search path.
+
+    This searches for the font_file at various places. The order it searches it described below.
+
+    1. Absolute path.
+    2. In ``assets/fonts`` folder.
+    3. In ``font/`` folder.
+    4. In the same directory.
+
+    Parameters
+    ----------
+    font_file :
+        The font file to add.
+
+    Examples
+    --------
+    Use ``with register_font(...)`` to add a font file to search
+    path.
+
+    .. code-block:: python
+
+        with register_font("path/to/font_file.ttf"):
+            a = Text("Hello", font="Custom Font Name")
+
+    Raises
+    ------
+    FileNotFoundError:
+        If the font doesn't exists.
+
+    AttributeError:
+        If this method is used on macOS.
+
+    .. important ::
+
+        This method is available for macOS for ``ManimPango>=v0.2.3``. Using this
+        method with previous releases will raise an :class:`AttributeError` on macOS.
+    """
+
+    input_folder = Path(config.input_file).parent.resolve()
+    possible_paths = [
+        Path(font_file),
+        input_folder / "assets/fonts" / font_file,
+        input_folder / "fonts" / font_file,
+        input_folder / font_file,
+    ]
+    for path in possible_paths:
+        path = path.resolve()
+        if path.exists():
+            file_path = path
+            logger.debug("Found file at %s", file_path.absolute())
+            break
+    else:
+        error = f"Can't find {font_file}." f"Tried these : {possible_paths}"
+        raise FileNotFoundError(error)
+
+    try:
+        assert manimpango.register_font(str(file_path))
+        yield
+    finally:
+        manimpango.unregister_font(str(file_path))

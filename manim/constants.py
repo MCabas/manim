@@ -5,6 +5,7 @@ Constant definitions.
 import typing
 
 import numpy as np
+from PIL import Image
 
 # Messages
 NOT_SETTING_FONT_MSG: str = """
@@ -42,6 +43,18 @@ ULTRABOLD: str = "ULTRABOLD"
 HEAVY: str = "HEAVY"
 ULTRAHEAVY: str = "ULTRAHEAVY"
 
+RESAMPLING_ALGORITHMS = {
+    "nearest": Image.NEAREST,
+    "none": Image.NEAREST,
+    "lanczos": Image.LANCZOS,
+    "antialias": Image.LANCZOS,
+    "bilinear": Image.BILINEAR,
+    "linear": Image.BILINEAR,
+    "bicubic": Image.BICUBIC,
+    "cubic": Image.BICUBIC,
+    "box": Image.BOX,
+    "hamming": Image.HAMMING,
+}
 
 # Geometry: directions
 ORIGIN: np.ndarray = np.array((0.0, 0.0, 0.0))
@@ -86,6 +99,10 @@ DR: np.ndarray = DOWN + RIGHT
 # Geometry
 START_X: int = 30
 START_Y: int = 20
+DEFAULT_DOT_RADIUS = 0.08
+DEFAULT_SMALL_DOT_RADIUS = 0.04
+DEFAULT_DASH_LENGTH = 0.05
+DEFAULT_ARROW_TIP_LENGTH = 0.35
 
 # Default buffers (padding)
 SMALL_BUFF: float = 0.1
@@ -101,7 +118,7 @@ DEFAULT_WAIT_TIME: float = 1.0
 
 # Misc
 DEFAULT_POINT_DENSITY_2D: int = 25
-DEFAULT_POINT_DENSITY_1D: int = 250
+DEFAULT_POINT_DENSITY_1D: int = 10
 DEFAULT_STROKE_WIDTH: int = 4
 
 # Mathematical constants
@@ -128,11 +145,11 @@ FFMPEG_VERBOSITY_MAP: typing.Dict[str, str] = {
     "CRITICAL": "fatal",
 }
 VERBOSITY_CHOICES = FFMPEG_VERBOSITY_MAP.keys()
-JS_RENDERER_INFO: str = (
+WEBGL_RENDERER_INFO: str = (
     "The Electron frontend to Manim is hosted at "
     "https://github.com/ManimCommunity/manim-renderer. After cloning and building it, "
     "you can either start it prior to running Manim or specify the path to the "
-    "executable with the --js_renderer_path flag."
+    "executable with the --webgl_renderer_path flag."
 )
 
 # Video qualities
@@ -177,3 +194,9 @@ QUALITIES: typing.Dict[str, typing.Dict[str, typing.Union[str, int, None]]] = {
 
 DEFAULT_QUALITY: str = "high_quality"
 DEFAULT_QUALITY_SHORT = QUALITIES[DEFAULT_QUALITY]["flag"]
+
+EPILOG = "Made with <3 by Manim Community developers."
+HELP_OPTIONS = ["-h", "--help"]
+CONTEXT_SETTINGS = {"help_option_names": HELP_OPTIONS}
+SHIFT_VALUE = 65505
+CTRL_VALUE = 65507

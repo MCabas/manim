@@ -6,6 +6,7 @@ __all__ = ["Animation", "Wait"]
 
 import typing
 from copy import deepcopy
+from typing import Union
 
 import numpy as np
 
@@ -13,7 +14,9 @@ if typing.TYPE_CHECKING:
     from manim.scene.scene import Scene
 
 from .. import logger
+from ..mobject import mobject, opengl_mobject
 from ..mobject.mobject import Mobject
+from ..mobject.opengl_mobject import OpenGLMobject
 from ..utils.rate_functions import smooth
 
 DEFAULT_ANIMATION_RUN_TIME: float = 1.0
@@ -30,12 +33,12 @@ class Animation:
         # If 0 < lag_ratio < 1, its applied to each
         # with lagged start times
         lag_ratio: float = DEFAULT_ANIMATION_LAG_RATIO,
-        run_time: int = DEFAULT_ANIMATION_RUN_TIME,
+        run_time: float = DEFAULT_ANIMATION_RUN_TIME,
         rate_func: typing.Callable[[float, float], np.ndarray] = smooth,
         name: str = None,
         remover: bool = False,  # remove a mobject from the screen?
         suspend_mobject_updating: bool = True,
-        **kwargs
+        **kwargs,
     ) -> None:
         self._typecheck_input(mobject)
         self.run_time = run_time
@@ -59,14 +62,19 @@ class Animation:
 
     def _typecheck_input(self, mobject: Mobject) -> None:
         if mobject is None:
-            logger.warning("creating dummy animation")
-        elif not isinstance(mobject, Mobject):
+            logger.debug("creating dummy animation")
+        elif not isinstance(mobject, Mobject) and not isinstance(
+            mobject, OpenGLMobject
+        ):
             raise TypeError("Animation only works on Mobjects")
 
     def __str__(self) -> str:
         if self.name:
             return self.name
-        return self.__class__.__name__ + str(self.mobject)
+        return f"{self.__class__.__name__}({str(self.mobject)})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def begin(self) -> None:
         # This is called right as an animation is being
@@ -108,7 +116,7 @@ class Animation:
             *[mob.family_members_with_points() for mob in self.get_all_mobjects()]
         )
 
-    def update_mobjects(self, dt: int) -> None:
+    def update_mobjects(self, dt: float) -> None:
         """
         Updates things like starting_mobject, and (for
         Transforms) target_mobject.  Note, since typically
@@ -190,6 +198,50 @@ class Animation:
     def is_remover(self) -> bool:
         return self.remover
 
+    def is_dummy(self) -> bool:
+        return self.mobject is None
+
+
+def prepare_animation(
+    anim: Union["Animation", "mobject._AnimationBuilder"]
+) -> "Animation":
+    r"""Returns either an unchanged animation, or the animation built
+    from a passed animation factory.
+
+    Examples
+    --------
+
+    ::
+
+        >>> from manim import Square, FadeIn
+        >>> s = Square()
+        >>> prepare_animation(FadeIn(s))
+        FadeIn(Square)
+
+    ::
+
+        >>> prepare_animation(s.animate.scale(2).rotate(42))
+        _MethodAnimation(Square)
+
+    ::
+
+        >>> prepare_animation(42)
+        Traceback (most recent call last):
+        ...
+        TypeError: Object 42 cannot be converted to an animation
+
+    """
+    if isinstance(anim, mobject._AnimationBuilder):
+        return anim.build()
+
+    if isinstance(anim, opengl_mobject._AnimationBuilder):
+        return anim.build()
+
+    if isinstance(anim, Animation):
+        return anim
+
+    raise TypeError(f"Object {anim} cannot be converted to an animation")
+
 
 class Wait(Animation):
     def __init__(
@@ -198,6 +250,7 @@ class Wait(Animation):
         self.duration = duration
         self.mobject = None
         self.stop_condition = stop_condition
+        self.is_static_wait = False
         super().__init__(None, **kwargs)
 
     def begin(self) -> None:
@@ -209,7 +262,7 @@ class Wait(Animation):
     def clean_up_from_scene(self, scene: "Scene") -> None:
         pass
 
-    def update_mobjects(self, dt: int) -> None:
+    def update_mobjects(self, dt: float) -> None:
         pass
 
     def interpolate(self, alpha: float) -> None:

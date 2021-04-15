@@ -113,6 +113,37 @@ in this example where we set the color of the ``\bigstar`` using :func:`~.set_co
             tex.set_color_by_tex('igsta', RED)
             self.add(tex)
 
+Note that :func:`~.set_color_by_tex` colors the entire substring containing the Tex searched for,
+not just the specific symbol or Tex expression searched for. Consider the following example:
+
+.. manim:: IncorrectLaTeXSubstringColoring
+    :save_last_frame:
+
+    class IncorrectLaTeXSubstringColoring(Scene):
+        def construct(self):
+            equation = MathTex(
+                r"e^x = x^0 + x^1 + \frac{1}{2} x^2 + \frac{1}{6} x^3 + \cdots + \frac{1}{n!} x^n + \cdots"
+            )
+            equation.set_color_by_tex("x", YELLOW)
+            self.add(equation)
+
+As you can see, this colors the entire equation yellow, contrary to what may be expected. To color only ``x`` yellow, we have to do the following:
+
+.. manim:: CorrectLaTeXSubstringColoring
+    :save_last_frame:
+
+    class CorrectLaTeXSubstringColoring(Scene):
+        def construct(self):
+            equation = MathTex(
+                r"e^x = x^0 + x^1 + \frac{1}{2} x^2 + \frac{1}{6} x^3 + \cdots + \frac{1}{n!} x^n + \cdots",
+                substrings_to_isolate="x"
+            )
+            equation.set_color_by_tex("x", YELLOW)
+            self.add(equation)
+
+By setting ``substring_to_isolate`` to ``x``, we split up the :class:`~.MathTex` into substrings
+automatically and isolate ``x`` components into individual substrings. Only then can :meth:`~.set_color_by_tex` be used to achieve the desired result.
+
 LaTeX Maths Fonts - The Template Library
 ++++++++++++++++++++++++++++++++++++++++
 Changing fonts in LaTeX when typesetting mathematical formulae is a little bit more tricky than
@@ -168,26 +199,27 @@ __all__ = [
 ]
 
 
-from functools import reduce
+import itertools as it
 import operator as op
+import re
+from functools import reduce
 
 from ... import config, logger
 from ...constants import *
 from ...mobject.geometry import Line
 from ...mobject.svg.svg_mobject import SVGMobject
-from ...mobject.svg.svg_mobject import VMobjectFromSVGPathstring
-from ...mobject.types.vectorized_mobject import VGroup
-from ...mobject.types.vectorized_mobject import VectorizedPoint
-from ...utils.strings import split_string_list_to_isolate_substrings
-from ...utils.tex_file_writing import tex_to_svg_file
+from ...mobject.svg.svg_path import SVGPathMobject
+from ...mobject.types.vectorized_mobject import VectorizedPoint, VGroup
 from ...utils.color import BLACK
 from ...utils.tex import TexTemplate
+from ...utils.tex_file_writing import tex_to_svg_file
+from .style_utils import parse_style
 
 TEX_MOB_SCALE_FACTOR = 0.05
 
 
-class TexSymbol(VMobjectFromSVGPathstring):
-    """Purely a renaming of VMobjectFromSVGPathstring."""
+class TexSymbol(SVGPathMobject):
+    """Purely a renaming of SVGPathMobject."""
 
     pass
 
@@ -241,7 +273,7 @@ class SingleStringMathTex(SVGMobject):
             background_stroke_color=background_stroke_color,
             **kwargs,
         )
-        if self.height is None:
+        if height is None:
             self.scale(TEX_MOB_SCALE_FACTOR)
         if self.organize_left_to_right:
             self.organize_submobjects_left_to_right()
@@ -326,14 +358,17 @@ class SingleStringMathTex(SVGMobject):
     def get_tex_string(self):
         return self.tex_string
 
-    def path_string_to_mobject(self, path_string):
+    def path_string_to_mobject(self, path_string, style):
         # Overwrite superclass default to use
         # specialized path_string mobject
-        return TexSymbol(path_string, z_index=self.z_index)
+        return TexSymbol(path_string, z_index=self.z_index, **parse_style(style))
 
     def organize_submobjects_left_to_right(self):
         self.sort(lambda p: p[0])
         return self
+
+    def init_colors(self, propagate_colors=True):
+        SVGMobject.init_colors(self, propagate_colors=propagate_colors)
 
 
 class MathTex(SingleStringMathTex):
@@ -392,17 +427,24 @@ class MathTex(SingleStringMathTex):
             self.organize_submobjects_left_to_right()
 
     def break_up_tex_strings(self, tex_strings):
-        substrings_to_isolate = op.add(
-            self.substrings_to_isolate, list(self.tex_to_color_map.keys())
+        tex_strings = [str(t) for t in tex_strings]
+        # Separate out anything surrounded in double braces
+        patterns = ["{{", "}}"]
+        # Separate out any strings specified in the isolate
+        # or tex_to_color_map lists.
+        patterns.extend(
+            [
+                "({})".format(re.escape(ss))
+                for ss in it.chain(
+                    self.substrings_to_isolate, self.tex_to_color_map.keys()
+                )
+            ]
         )
-        split_list = split_string_list_to_isolate_substrings(
-            tex_strings, *substrings_to_isolate
-        )
-        if self.arg_separator == " ":
-            split_list = [str(x).strip() for x in split_list]
-        # split_list = list(map(str.strip, split_list))
-        split_list = [s for s in split_list if s != ""]
-        return split_list
+        pattern = "|".join(patterns)
+        pieces = []
+        for s in tex_strings:
+            pieces.extend(re.split(pattern, s))
+        return list(filter(lambda s: s, pieces))
 
     def break_up_by_substrings(self):
         """
@@ -521,7 +563,9 @@ class BulletedList(Tex):
         self.dot_scale_factor = dot_scale_factor
         self.tex_environment = tex_environment
         line_separated_items = [s + "\\\\" for s in items]
-        Tex.__init__(self, *line_separated_items, **kwargs)
+        Tex.__init__(
+            self, *line_separated_items, tex_environment=tex_environment, **kwargs
+        )
         for part in self:
             dot = MathTex("\\cdot").scale(self.dot_scale_factor)
             dot.next_to(part[0], LEFT, SMALL_BUFF)
@@ -558,16 +602,16 @@ class Title(Tex):
         self.match_underline_width_to_text = match_underline_width_to_text
         self.underline_buff = underline_buff
         Tex.__init__(self, *text_parts, **kwargs)
-        self.underline_width = config["frame_width"] - 2
         self.scale(self.scale_factor)
         self.to_edge(UP)
         if self.include_underline:
+            underline_width = config["frame_width"] - 2
             underline = Line(LEFT, RIGHT)
             underline.next_to(self, DOWN, buff=self.underline_buff)
             if self.match_underline_width_to_text:
                 underline.match_width(self)
             else:
-                underline.set_width(self.underline_width)
+                underline.width = underline_width
             self.add(underline)
             self.underline = underline
 

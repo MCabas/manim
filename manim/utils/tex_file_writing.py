@@ -6,8 +6,8 @@
 
 """
 
-import os
 import hashlib
+import os
 from pathlib import Path
 
 from .. import config, logger
@@ -164,6 +164,30 @@ def compile_tex(tex_file, tex_compiler, output_format):
         exit_code = os.system(command)
         if exit_code != 0:
             log_file = tex_file.replace(".tex", ".log")
+            if not Path(log_file).exists():
+                raise RuntimeError(
+                    f"{tex_compiler} failed but did not produce a log file. "
+                    "Check your LaTeX installation."
+                )
+            with open(log_file, "r") as f:
+                log = f.readlines()
+                log_error_pos = [
+                    ind for (ind, line) in enumerate(log) if line.startswith("!")
+                ]
+                if log_error_pos:
+                    logger.error(f"LaTeX compilation error! {tex_compiler} reports:")
+                    for lineno in log_error_pos:
+                        # search for a line starting with "l." in the next
+                        # few lines past the error; otherwise just print some lines.
+                        printed_lines = 1
+                        for _ in range(10):
+                            if log[lineno + printed_lines].startswith("l."):
+                                break
+                            printed_lines += 1
+
+                        for line in log[lineno : lineno + printed_lines + 1]:
+                            logger.error(line)
+
             raise ValueError(
                 f"{tex_compiler} error converting to"
                 f" {output_format[1:]}. See log output above or"
@@ -212,7 +236,7 @@ def convert_to_svg(dvi_file, extension, page=1):
             f"Your installation does not support converting {extension} files to SVG."
             f" Consider updating dvisvgm to at least version 2.4."
             f" If this does not solve the problem, please refer to our troubleshooting guide at:"
-            f" https://docs.manim.community/en/latest/installation/troubleshooting.html"
+            f" https://docs.manim.community/en/stable/installation/troubleshooting.html"
         )
 
     return result

@@ -5,7 +5,7 @@ __all__ = [
     "TexTemplateFromFile",
 ]
 
-
+import copy
 import re
 
 
@@ -48,6 +48,7 @@ class TexTemplate:
 \usepackage[english]{babel}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
+\usepackage{lmodern}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{dsfont}
@@ -226,6 +227,9 @@ class TexTemplate:
         begin, end = self._texcode_for_environment(environment)
         return self.body.replace(self.placeholder_text, f"{begin}\n{expression}\n{end}")
 
+    def copy(self) -> "TexTemplate":
+        return copy.deepcopy(self)
+
 
 class TexTemplateFromFile(TexTemplate):
     """A TexTemplate object created from a template file (default: tex_template.tex)
@@ -265,7 +269,7 @@ class TexTemplateFromFile(TexTemplate):
     """
 
     def __init__(self, **kwargs):
-        self.template_file = kwargs.pop("filename", "tex_template.tex")
+        self.template_file = kwargs.pop("tex_filename", "tex_template.tex")
         super().__init__(**kwargs)
 
     def _rebuild(self):
